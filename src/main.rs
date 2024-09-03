@@ -1,12 +1,13 @@
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use derive_more::{Display, From, FromStr};
 use log::info;
 use reqwest::Client;
-use scraper::Html;
+use scraper::{selectable::Selectable, Html};
 
-use clubdam_shopsearch::{regex, selector};
+use clubdam_shopsearch::{
+    regex, selector, CityCode, Machines, PrefCode, Recordings, Scorings, Store,
+};
 use tokio::time::sleep;
 
 #[tokio::main]
@@ -14,9 +15,13 @@ async fn main() -> anyhow::Result<()> {
     env_logger::builder().format_timestamp_nanos().init();
     let client = Client::new();
 
-    for i in 1..=47 {
-        let cities = get_city_list(&client, i.into()).await?;
-        println!("{cities:?}");
+    for pref in PrefCode::iter() {
+        for city in get_city_list(&client, pref).await? {
+            let res = process_city(&client, pref, city).await?;
+            for res in res {
+                println!("{pref} {city} {res:?}");
+            }
+        }
     }
     Ok(())
 }
@@ -68,19 +73,103 @@ async fn get_city_list(client: &Client, code: PrefCode) -> anyhow::Result<Vec<Ci
         .collect()
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, From)]
-struct PrefCode(u8);
-impl std::fmt::Display for PrefCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:02}", self.0)
-    }
+async fn process_city(
+    client: &Client,
+    pref: PrefCode,
+    city: CityCode,
+) -> anyhow::Result<Vec<Store>> {
+    info!("Processing prefecture {pref}, city {city}");
+    let html = Html::parse_document(
+        &client
+            .get(format!(
+                "https://www.clubdam.com/shopsearch/?todofukenCode={pref}&cityCode={city}"
+            ))
+            .send()
+            .await?
+            .text()
+            .await?,
+    );
+    sleep(Duration::from_secs_f64(0.5)).await;
+    html.select(selector!("li.result-item"))
+        .map(|e| {
+            (|| {
+                let name = e
+                    .select(selector!("span.store-name,a.store-name"))
+                    .next()
+                    .context("Missing store name")?
+                    .text()
+                    .collect();
+                let address = e
+                    .select(selector!("div.store-address > span"))
+                    .next()
+                    .context("Missing address")?
+                    .text()
+                    .collect();
+                let map = regex!(r"https://www.google.co.jp/maps\?q=([0-9.-]+),([0-9.-]+)")
+                    .captures(
+                        e.select(selector!("div.store-address > a"))
+                            .next()
+                            .context("Missing map link")?
+                            .attr("href")
+                            .context("Missing href in map link")?,
+                    )
+                    .context("Invalid map link format")?;
+                let latitude = map[1].parse().context("Invalid latitude format")?;
+                let longitude = map[2].parse().context("Invalid latitude format")?;
+                let phone = e
+                    .select(selector!("div.store-tel > a"))
+                    .next()
+                    .context("Missing store telephone number")?
+                    .text()
+                    .collect();
+                let url = e
+                    .select(selector!("div.store-url > a"))
+                    .next()
+                    .map(|e| {
+                        anyhow::Ok(
+                            e.attr("href")
+                                .context("Missing href in store url")?
+                                .parse()
+                                .context("Invalid store URL")?,
+                        )
+                    })
+                    .transpose()?;
+                let mut machines = Machines::default();
+                for e in e.select(selector!("li.machine-item > img")) {
+                    match e.attr("alt").context("Missing alt in machine-item img")? {
+                        "LIVE DAM Ai" => machines.ai = true,
+                        "LIVE DAM STADIUM" => machines.studium = true,
+                        "LIVE DAM" => machines.normal = true,
+                        "PremierDAM" => machines.premier = true,
+                        // Cyber dam should be somewhere...
+                        e => bail!("Unexpected machine: {e:?}"),
+                    }
+                }
+                let mut recordings = Recordings::default();
+                let mut scorings = Scorings::default();
+                for e in e.select(selector!("li.feature-item > span")) {
+                    match &e.text().collect::<String>()[..] {
+                        "DAM★とも動画" => recordings.video = true,
+                        "DAM★とも録音" => recordings.voice = true,
+                        "精密採点Ai" => scorings.ai = true,
+                        "精密採点DX-G" => scorings.dx_g = true,
+                        "精密採点DX" => scorings.dx = true,
+                        e => bail!("Unexpected machine: {e:?}"),
+                    }
+                }
+                anyhow::Ok(Store {
+                    name,
+                    address,
+                    latitude,
+                    longitude,
+                    phone,
+                    url,
+                    machines,
+                    recordings,
+                    scorings,
+                })
+            })()
+            .with_context(|| format!("While parsing {:?} in pref={pref}, city={city}", e.html()))
+        })
+        .collect()
 }
-impl std::str::FromStr for PrefCode {
-    type Err = anyhow::Error;
-
-    fn from_str(s: &str) -> anyhow::Result<Self> {
-        Ok(Self(s.strip_prefix('0').unwrap_or(s).parse()?))
-    }
-}
-#[derive(Clone, Copy, PartialEq, Eq, Debug, FromStr, Display)]
-struct CityCode(u32);
