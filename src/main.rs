@@ -15,14 +15,13 @@ async fn main() -> anyhow::Result<()> {
     env_logger::builder().format_timestamp_nanos().init();
     let client = Client::new();
 
+    let mut res = vec![];
     for pref in PrefCode::iter() {
         for city in get_city_list(&client, pref).await? {
-            let res = process_city(&client, pref, city).await?;
-            for res in res {
-                println!("{pref} {city} {res:?}");
-            }
+            res.extend(process_city(&client, pref, city).await?);
         }
     }
+    serde_json::to_writer(fs_err::File::create("ignore/data.json")?, &res)?;
     Ok(())
 }
 
@@ -38,7 +37,7 @@ async fn get_city_list(client: &Client, code: PrefCode) -> anyhow::Result<Vec<Ci
             .text()
             .await?,
     );
-    sleep(Duration::from_secs_f64(0.5)).await;
+    // sleep(Duration::from_secs_f64(0.5)).await;
     html.select(selector!(r#"a[href*="?todofukenCode="]"#))
         .map(|e| {
             (|| {
@@ -89,7 +88,7 @@ async fn process_city(
             .text()
             .await?,
     );
-    sleep(Duration::from_secs_f64(0.5)).await;
+    // sleep(Duration::from_secs_f64(0.5)).await;
     html.select(selector!("li.result-item"))
         .map(|e| {
             (|| {
@@ -158,6 +157,8 @@ async fn process_city(
                     }
                 }
                 anyhow::Ok(Store {
+                    prefecture: pref,
+                    city,
                     name,
                     address,
                     latitude,

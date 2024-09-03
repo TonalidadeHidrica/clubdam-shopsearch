@@ -1,4 +1,5 @@
 use derive_more::{Display, FromStr};
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 #[macro_export]
@@ -21,7 +22,7 @@ macro_rules! regex {
     }};
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub struct PrefCode(u8);
 impl std::fmt::Display for PrefCode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -40,11 +41,13 @@ impl PrefCode {
         (1..=47).map(PrefCode)
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Debug, FromStr, Display)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, FromStr, Display, Serialize, Deserialize)]
 pub struct CityCode(u32);
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Store {
+    pub prefecture: PrefCode,
+    pub city: CityCode,
     pub name: String,
     pub address: String,
     pub latitude: f64,
@@ -55,19 +58,19 @@ pub struct Store {
     pub recordings: Recordings,
     pub scorings: Scorings,
 }
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct Machines {
     pub ai: bool,
     pub studium: bool,
     pub normal: bool,
     pub premier: bool,
 }
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct Recordings {
     pub video: bool,
     pub voice: bool,
 }
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Serialize, Deserialize)]
 pub struct Scorings {
     pub ai: bool,
     pub dx_g: bool,
